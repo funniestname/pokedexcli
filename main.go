@@ -2,11 +2,14 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
-	"github.com/funniestname/pokemap"
+	"github.com/funniestname/pokedexcli/pokecache"
+	"github.com/funniestname/pokedexcli/pokemap"
 )
 
 type cliCommand struct {
@@ -15,13 +18,20 @@ type cliCommand struct {
 	callback    func() error
 }
 
-type config struct {
+type Config struct {
+	cache    *pokecache.Cache
 	Next     string
-	Previous string
+	Previous *string
 }
 
 func main() {
-	commands := getCommands()
+	myCache := pokecache.NewCache(1 * time.Minute)
+	cm := &Config{
+		cache:    myCache,
+		Next:     "https://pokeapi.co/api/v2/location/",
+		Previous: nil,
+	}
+	commands := cm.getCommands()
 	repl(commands)
 }
 
@@ -56,12 +66,12 @@ func repl(commands map[string]cliCommand) {
 	}
 }
 
-func getCommands() map[string]cliCommand {
+func (cm *Config) getCommands() map[string]cliCommand {
 	return map[string]cliCommand{
 		"help": {
 			name:        "help",
 			description: "Displays a help message",
-			callback:    commandHelp,
+			callback:    cm.commandHelp,
 		},
 		"exit": {
 			name:        "exit",
@@ -71,19 +81,19 @@ func getCommands() map[string]cliCommand {
 		"map": {
 			name:        "map",
 			description: "Display 20 location areas",
-			callback:    commandMap,
+			callback:    cm.commandMap,
 		},
 		"mapb": {
 			name:        "mapb",
 			description: "Display the previous 20 location areas",
-			callback:    commandMapb,
+			callback:    cm.commandMapb,
 		},
 	}
 }
 
-func commandHelp() error {
+func (cm *Config) commandHelp() error {
 	fmt.Println("Available commands:")
-	for _, command := range getCommands() {
+	for _, command := range cm.getCommands() {
 		fmt.Printf(" %s: %s\n", command.name, command.description)
 	}
 	return nil
@@ -95,18 +105,80 @@ func commandExit() error {
 	return nil
 }
 
-func commandMap() error {
-	url := "https://pokeapi.co/api/v2/location/"
-	locations, err := pokemap.GetPokeMap(url)
+func (cm *Config) commandMap() error {
+	values, ok := cm.cache.Get(cm.Next)
+	if ok {
+		var locations pokemap.PokeLocation
+		err := json.Unmarshal(values, &locations)
+		if err != nil {
+			return err
+		}
+		cm.Next = locations.Next
+		cm.Previous = locations.Previous
+
+		for _, val := range locations.Results {
+			fmt.Println(val.Name)
+		}
+		return nil
+	}
+	locations, err := pokemap.GetPokeMap(cm.Next)
 	if err != nil {
 		return err
 	}
-	for _, val := range locations {
-		fmt.Println(val)
+
+	locationBytes, err := json.Marshal(locations)
+	if err != nil {
+		return err
+	}
+	cm.cache.Add(cm.Next, locationBytes)
+
+	cm.Next = locations.Next
+	cm.Previous = locations.Previous
+
+	for _, val := range locations.Results {
+		fmt.Println(val.Name)
 	}
 	return nil
 }
 
-func commandMapb() error {
+func (cm *Config) commandMapb() error {
+	if cm.Previous == nil {
+		fmt.Println("No previous page found")
+		return nil
+	}
+
+	values, ok := cm.cache.Get(*cm.Previous)
+	if ok {
+		var locations pokemap.PokeLocation
+		err := json.Unmarshal(values, &locations)
+		if err != nil {
+			return err
+		}
+		cm.Next = locations.Next
+		cm.Previous = locations.Previous
+
+		for _, val := range locations.Results {
+			fmt.Println(val.Name)
+		}
+		return nil
+	}
+
+	locations, err := pokemap.GetPokeMap(*cm.Previous)
+	if err != nil {
+		return err
+	}
+
+	locationBytes, err := json.Marshal(locations)
+	if err != nil {
+		return err
+	}
+	cm.cache.Add(*cm.Previous, locationBytes)
+
+	cm.Next = locations.Next
+	cm.Previous = locations.Previous
+
+	for _, val := range locations.Results {
+		fmt.Println(val.Name)
+	}
 	return nil
 }

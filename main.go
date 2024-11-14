@@ -15,7 +15,8 @@ import (
 type cliCommand struct {
 	name        string
 	description string
-	callback    func() error
+	params      []string
+	callback    func([]string) error
 }
 
 type Config struct {
@@ -26,102 +27,110 @@ type Config struct {
 
 func main() {
 	myCache := pokecache.NewCache(1 * time.Minute)
-	cm := &Config{
+	cfg := &Config{
 		cache:    myCache,
 		Next:     "https://pokeapi.co/api/v2/location/",
 		Previous: nil,
 	}
-	commands := cm.getCommands()
+	commands := cfg.getCommands()
 	repl(commands)
 }
 
 func repl(commands map[string]cliCommand) {
-	reader := bufio.NewReader(os.Stdin)
+	scanner := bufio.NewScanner(os.Stdin)
 
 	for {
 		fmt.Print("pokedex > ")
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			fmt.Println("Error reading input: ", err)
+		scanner.Scan()
+		input := scanner.Text()
+
+		if len(input) == 0 {
 			continue
 		}
 
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
+		words := strings.Fields(input)
+		commandName := words[0]
+		args := words[1:]
 
-		parts := strings.Split(line, " ")
-		commandName := parts[0]
 		command, ok := commands[commandName]
 		if !ok {
 			fmt.Printf("Unknown command: %s\n", commandName)
 			continue
 		}
 
-		err = command.callback()
+		err := command.callback(args)
 		if err != nil {
 			fmt.Println("Error executing command:", err)
 		}
 	}
 }
 
-func (cm *Config) getCommands() map[string]cliCommand {
+func (cfg *Config) getCommands() map[string]cliCommand {
 	return map[string]cliCommand{
 		"help": {
 			name:        "help",
 			description: "Displays a help message",
-			callback:    cm.commandHelp,
+			params:      []string{},
+			callback:    cfg.commandHelp,
 		},
 		"exit": {
 			name:        "exit",
 			description: "Exit the pokedex",
+			params:      []string{},
 			callback:    commandExit,
 		},
 		"map": {
 			name:        "map",
 			description: "Display 20 location areas",
-			callback:    cm.commandMap,
+			params:      []string{},
+			callback:    cfg.commandMap,
 		},
 		"mapb": {
 			name:        "mapb",
 			description: "Display the previous 20 location areas",
-			callback:    cm.commandMapb,
+			params:      []string{},
+			callback:    cfg.commandMapb,
+		},
+		"explore": {
+			name:        "explore",
+			description: "Display Pokemon in a specified location",
+			params:      []string{"location_name"},
+			callback:    cfg.commandExplore,
 		},
 	}
 }
 
-func (cm *Config) commandHelp() error {
+func (cfg *Config) commandHelp([]string) error {
 	fmt.Println("Available commands:")
-	for _, command := range cm.getCommands() {
+	for _, command := range cfg.getCommands() {
 		fmt.Printf(" %s: %s\n", command.name, command.description)
 	}
 	return nil
 }
 
-func commandExit() error {
+func commandExit([]string) error {
 	fmt.Println("Exiting the pokedex...")
 	os.Exit(0)
 	return nil
 }
 
-func (cm *Config) commandMap() error {
-	values, ok := cm.cache.Get(cm.Next)
+func (cfg *Config) commandMap([]string) error {
+	values, ok := cfg.cache.Get(cfg.Next)
 	if ok {
 		var locations pokemap.PokeLocation
 		err := json.Unmarshal(values, &locations)
 		if err != nil {
 			return err
 		}
-		cm.Next = locations.Next
-		cm.Previous = locations.Previous
+		cfg.Next = locations.Next
+		cfg.Previous = locations.Previous
 
 		for _, val := range locations.Results {
 			fmt.Println(val.Name)
 		}
 		return nil
 	}
-	locations, err := pokemap.GetPokeMap(cm.Next)
+	locations, err := pokemap.GetPokeMap(cfg.Next)
 	if err != nil {
 		return err
 	}
@@ -130,10 +139,10 @@ func (cm *Config) commandMap() error {
 	if err != nil {
 		return err
 	}
-	cm.cache.Add(cm.Next, locationBytes)
+	cfg.cache.Add(cfg.Next, locationBytes)
 
-	cm.Next = locations.Next
-	cm.Previous = locations.Previous
+	cfg.Next = locations.Next
+	cfg.Previous = locations.Previous
 
 	for _, val := range locations.Results {
 		fmt.Println(val.Name)
@@ -141,21 +150,21 @@ func (cm *Config) commandMap() error {
 	return nil
 }
 
-func (cm *Config) commandMapb() error {
-	if cm.Previous == nil {
+func (cfg *Config) commandMapb([]string) error {
+	if cfg.Previous == nil {
 		fmt.Println("No previous page found")
 		return nil
 	}
 
-	values, ok := cm.cache.Get(*cm.Previous)
+	values, ok := cfg.cache.Get(*cfg.Previous)
 	if ok {
 		var locations pokemap.PokeLocation
 		err := json.Unmarshal(values, &locations)
 		if err != nil {
 			return err
 		}
-		cm.Next = locations.Next
-		cm.Previous = locations.Previous
+		cfg.Next = locations.Next
+		cfg.Previous = locations.Previous
 
 		for _, val := range locations.Results {
 			fmt.Println(val.Name)
@@ -163,7 +172,7 @@ func (cm *Config) commandMapb() error {
 		return nil
 	}
 
-	locations, err := pokemap.GetPokeMap(*cm.Previous)
+	locations, err := pokemap.GetPokeMap(*cfg.Previous)
 	if err != nil {
 		return err
 	}
@@ -172,13 +181,52 @@ func (cm *Config) commandMapb() error {
 	if err != nil {
 		return err
 	}
-	cm.cache.Add(*cm.Previous, locationBytes)
+	cfg.cache.Add(*cfg.Previous, locationBytes)
 
-	cm.Next = locations.Next
-	cm.Previous = locations.Previous
+	cfg.Next = locations.Next
+	cfg.Previous = locations.Previous
 
 	for _, val := range locations.Results {
 		fmt.Println(val.Name)
+	}
+	return nil
+}
+
+func (cfg *Config) commandExplore(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: explore 'area'")
+	}
+	fullUrl := "https://pokeapi.co/api/v2/location-area/" + args[0]
+	fmt.Println("Exploring " + args[0])
+
+	values, ok := cfg.cache.Get(fullUrl)
+	if ok {
+		var pokemonEncounters pokemap.PokemonEncounters
+		err := json.Unmarshal(values, &pokemonEncounters)
+		if err != nil {
+			return err
+		}
+		fmt.Println("Found Pokemon:")
+		for _, val := range pokemonEncounters {
+			fmt.Println(" - " + val.Pokemon.Name)
+		}
+		return nil
+	}
+
+	pokemonEncounters, err := pokemap.GetPokemon(fullUrl)
+	if err != nil {
+		return err
+	}
+
+	pokemonBytes, err := json.Marshal(pokemonEncounters)
+	if err != nil {
+		return err
+	}
+	cfg.cache.Add(fullUrl, pokemonBytes)
+
+	fmt.Println("Found Pokemon:")
+	for _, val := range pokemonEncounters {
+		fmt.Println(" - " + val.Pokemon.Name)
 	}
 	return nil
 }

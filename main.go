@@ -21,6 +21,7 @@ type cliCommand struct {
 
 type Config struct {
 	cache    *pokecache.Cache
+	Pokedex  map[string]pokemap.PokemonData
 	Next     string
 	Previous *string
 }
@@ -29,6 +30,7 @@ func main() {
 	myCache := pokecache.NewCache(1 * time.Minute)
 	cfg := &Config{
 		cache:    myCache,
+		Pokedex:  make(map[string]pokemap.PokemonData),
 		Next:     "https://pokeapi.co/api/v2/location/",
 		Previous: nil,
 	}
@@ -96,6 +98,24 @@ func (cfg *Config) getCommands() map[string]cliCommand {
 			description: "Display Pokemon in a specified location",
 			params:      []string{"location_name"},
 			callback:    cfg.commandExplore,
+		},
+		"catch": {
+			name:        "catch",
+			description: "Try to catch the chosen Pokemon",
+			params:      []string{"pokemon"},
+			callback:    cfg.commandCatch,
+		},
+		"inspect": {
+			name:        "inspect",
+			description: "Inspect caught Pokemon",
+			params:      []string{"pokemon"},
+			callback:    cfg.commandInspect,
+		},
+		"pokedex": {
+			name:        "pokedex",
+			description: "Look at pokedex",
+			params:      []string{},
+			callback:    cfg.commandPokedex,
 		},
 	}
 }
@@ -227,6 +247,58 @@ func (cfg *Config) commandExplore(args []string) error {
 	fmt.Println("Found Pokemon:")
 	for _, val := range pokemonEncounters {
 		fmt.Println(" - " + val.Pokemon.Name)
+	}
+	return nil
+}
+
+func (cfg *Config) commandCatch(args []string) error {
+	if len(args[0]) < 1 {
+		return fmt.Errorf("usage: catch 'pokemon'")
+	}
+	pokemonData, catch, err := pokemap.GetCatch(args[0])
+	if err != nil {
+		return err
+	}
+	if catch {
+		fmt.Println(args[0] + " was caught!")
+		cfg.Pokedex[args[0]] = pokemonData
+		return nil
+	}
+	fmt.Println(args[0] + " escaped!")
+	return nil
+}
+
+func (cfg *Config) commandInspect(args []string) error {
+	_, ok := cfg.Pokedex[args[0]]
+	if !ok {
+		return fmt.Errorf("you have not caught that pokemon")
+	}
+	pokedexData := cfg.Pokedex[args[0]]
+	fmt.Println("Name: " + pokedexData.Name)
+	fmt.Printf("Height: %d\n", pokedexData.Height)
+	fmt.Printf("Weight: %d\n", pokedexData.Weight)
+	fmt.Println("Stats:")
+
+	for _, value := range pokedexData.Stats {
+		fmt.Printf(" -%s: %d\n", value.Stat.Name, value.BaseStat)
+	}
+
+	fmt.Println("Types:")
+	for _, t := range pokedexData.Types {
+		fmt.Printf(" -%s\n", t.Type.Name)
+	}
+	return nil
+}
+
+func (cfg *Config) commandPokedex([]string) error {
+	println("your Pokedex:")
+
+	if len(cfg.Pokedex) < 1 {
+		return fmt.Errorf("you do not have any Pokemon")
+	}
+
+	for pokemon, _ := range cfg.Pokedex {
+		fmt.Printf(" - %s\n", pokemon)
 	}
 	return nil
 }
